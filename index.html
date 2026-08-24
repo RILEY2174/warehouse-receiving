@@ -120,7 +120,66 @@ function barcodeScanned(decodedText) {
   lastScan = tracking;
   lastScanTime = now;
 
-  submitTracking(tracking);
+  async function submitTracking(tracking) {
+
+  const url =
+    WEB_APP_URL +
+    "?key=" + encodeURIComponent(SCANNER_KEY) +
+    "&tracking=" + encodeURIComponent(tracking);
+
+  const status = document.getElementById("status");
+
+  status.className = "";
+  status.innerHTML =
+    "Sending..." +
+    "<div class='tracking'>" +
+    tracking +
+    "</div>";
+
+  try {
+
+    const response = await fetch(url, {
+      method: "GET",
+      mode: "cors"
+    });
+
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(text || "Request failed");
+    }
+
+    status.className = "success";
+    status.innerHTML =
+      "✅ PACKAGE RECEIVED" +
+      "<div class='tracking'>" +
+      tracking +
+      "</div>";
+
+    if (navigator.vibrate) {
+      navigator.vibrate(150);
+    }
+
+    beep();
+
+    setTimeout(function() {
+      status.className = "";
+      status.innerHTML =
+        "Point camera at next package barcode";
+    }, 2500);
+
+  } catch (error) {
+
+    status.className = "";
+    status.innerHTML =
+      "❌ NOT SAVED" +
+      "<div class='tracking'>" +
+      error.message +
+      "</div>";
+
+    console.error(error);
+  }
+};
 }
 
 
