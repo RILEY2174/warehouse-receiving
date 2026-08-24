@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+  <title>Warehouse Receiving</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f4f4f4;
+      text-align: center;
+    }
+
+    .header {
+      background: #111;
+      color: white;
+      padding: 18px;
+      font-size: 26px;
+      font-weight: bold;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: auto;
+      padding: 20px;
+    }
+
+    #reader {
+      width: 100%;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    #status {
+      margin-top: 20px;
+      padding: 20px;
+      border-radius: 10px;
+      font-size: 22px;
+      font-weight: bold;
+      background: white;
+    }
+
+    .success {
+      background: #d8f5dc !important;
+    }
+
+    .tracking {
+      font-size: 18px;
+      margin-top: 8px;
+      word-break: break-all;
+    }
+
+    button {
+      font-size: 22px;
+      padding: 15px 30px;
+      margin-top: 20px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="header">
+  📦 Warehouse Receiving
+</div>
+
+<div class="container">
+
+  <div id="reader"></div>
+
+  <div id="status">
+    Point camera at package barcode
+  </div>
+
+</div>
+
+<iframe id="submitFrame"
+        name="submitFrame"
+        style="display:none;">
+</iframe>
+
+<script>
+
+const WEB_APP_URL =
+"https://script.google.com/macros/s/AKfycbzyI_dpKHI22joqGcDdf6TfBxwOU7Y1uyurlNw5WzZ8So054baA67JXDTk1una-TqFI0Q/exec";
+
+const SCANNER_KEY = "AKfycbzyI_dpKHI22joqGcDdf6TfBxwOU7Y1uyurlNw5WzZ8So054baA67JXDTk1una-TqFI0Q";
+
+let lastScan = "";
+let lastScanTime = 0;
+
+function barcodeScanned(decodedText) {
+
+  let tracking = decodedText
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+
+  const now = Date.now();
+
+  // Stops the camera from repeatedly reading
+  // the same barcode while still pointed at it.
+  if (
+    tracking === lastScan &&
+    now - lastScanTime < 4000
+  ) {
+    return;
+  }
+
+  lastScan = tracking;
+  lastScanTime = now;
+
+  submitTracking(tracking);
+}
+
+
+function submitTracking(tracking) {
+
+  const url =
+    WEB_APP_URL +
+    "?key=" + encodeURIComponent(SCANNER_KEY) +
+    "&tracking=" + encodeURIComponent(tracking);
+
+  // Sends tracking number to Apps Script
+  document.getElementById("submitFrame").src = url;
+
+  showSuccess(tracking);
+
+  // Vibrate tablet
+  if (navigator.vibrate) {
+    navigator.vibrate(150);
+  }
+
+  // Beep
+  beep();
+}
+
+
+function showSuccess(tracking) {
+
+  const status = document.getElementById("status");
+
+  status.className = "success";
+
+  status.innerHTML =
+    "✅ PACKAGE RECEIVED" +
+    "<div class='tracking'>" +
+    tracking +
+    "</div>";
+
+  setTimeout(function() {
+
+    status.className = "";
+
+    status.innerHTML =
+      "Point camera at next package barcode";
+
+  }, 2500);
+}
+
+
+function beep() {
+
+  const audioContext =
+    new (window.AudioContext ||
+         window.webkitAudioContext)();
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+
+  oscillator.frequency.value = 900;
+
+  oscillator.start();
+
+  setTimeout(function() {
+    oscillator.stop();
+  }, 120);
+}
+
+
+const scanner = new Html5QrcodeScanner(
+  "reader",
+  {
+    fps: 10,
+
+    qrbox: {
+      width: 300,
+      height: 140
+    },
+
+    rememberLastUsedCamera: true,
+
+    supportedScanTypes: [
+      Html5QrcodeScanType.SCAN_TYPE_CAMERA
+    ]
+  },
+
+  false
+);
+
+scanner.render(
+  barcodeScanned,
+  function(error) {
+    // Ignore normal camera scanning errors
+  }
+);
+
+</script>
+
+</body>
+</html>
