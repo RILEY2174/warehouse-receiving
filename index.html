@@ -96,10 +96,19 @@ let lastScanTime = 0;
 // Clean barcode text
 function cleanTracking(value) {
 
-  return String(value || "")
+  let tracking = String(value || "")
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
+
+  // FedEx Ground barcodes sometimes contain
+  // a long internal number ending with the
+  // actual 12-digit tracking number.
+  if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
+    tracking = tracking.slice(-12);
+  }
+
+  return tracking;
 }
 
 
