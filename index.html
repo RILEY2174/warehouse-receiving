@@ -109,11 +109,19 @@ const WEB_APP_URL =
 
 let scanner = null;
 
-let lastScan = "";
-let lastScanTime = 0;
+let lastSavedTracking = "";
+let lastSavedTime = 0;
+
+let pendingFedExTracking = "";
+let pendingFedExCount = 0;
+let pendingFedExTime = 0;
+
+let saveLock = false;
 
 
-// Clean raw barcode data
+// -----------------------------
+// CLEAN RAW BARCODE
+// -----------------------------
 function cleanTracking(value) {
 
   let tracking = String(value || "")
@@ -123,14 +131,27 @@ function cleanTracking(value) {
 
 
   // USPS:
-  // 420 + destination ZIP + actual tracking number
+  // 420 + 5-digit destination ZIP + actual tracking number
+  //
+  // Example:
+  // 420275229400109105116532400348
+  // becomes:
+  // 9400109105116532400348
+
   if (/^420\d{5}\d{20,22}$/.test(tracking)) {
     tracking = tracking.substring(8);
   }
 
 
-  // FedEx Ground:
-  // long barcode ending with actual 12-digit tracking number
+  // FedEx long barcode:
+  // long payload beginning with 96...
+  // ending with the real 12-digit tracking number
+  //
+  // Example:
+  // 9622001900000000000000873499308860
+  // becomes:
+  // 873499308860
+
   if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
     tracking = tracking.slice(-12);
   }
@@ -140,7 +161,9 @@ function cleanTracking(value) {
 }
 
 
-// Identify carrier
+// -----------------------------
+// IDENTIFY CARRIER
+// -----------------------------
 function getCarrier(tracking) {
 
   tracking = cleanTracking(tracking);
@@ -164,7 +187,7 @@ function getCarrier(tracking) {
   }
 
 
-  // FedEx
+  // FedEx common lengths
   if (
     /^\d{12}$/.test(tracking) ||
     /^\d{15}$/.test(tracking) ||
@@ -179,17 +202,33 @@ function getCarrier(tracking) {
 }
 
 
-// Called whenever a barcode is seen
+// -----------------------------
+// BARCODE DETECTED
+// -----------------------------
 function barcodeScanned(decodedText) {
 
-  const tracking = cleanTracking(decodedText);
+  if (saveLock) {
+    return;
+  }
 
-  if (!tracking) return;
+  const raw = String(decodedText || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+
+  if (!raw) return;
+
+
+  const cameFromLongFedEx =
+    /^\d{30,}$/.test(raw) &&
+    raw.startsWith("96");
+
+
+  const tracking = cleanTracking(raw);
 
   const carrier = getCarrier(tracking);
 
 
-  // Ignore unrelated barcodes
   if (!carrier) {
 
     const status = document.getElementById("status");
@@ -209,24 +248,99 @@ function barcodeScanned(decodedText) {
   const now = Date.now();
 
 
-  // Prevent rapid repeat reads
+  // Prevent immediate re-save of same completed package
   if (
-    tracking === lastScan &&
-    now - lastScanTime < 5000
+    tracking === lastSavedTracking &&
+    now - lastSavedTime < 8000
   ) {
     return;
   }
 
 
-  lastScan = tracking;
-  lastScanTime = now;
+  // -----------------------------
+  // FEDEX PROTECTION
+  // -----------------------------
 
+  if (carrier === "FedEx") {
+
+    // Long FedEx barcode is trusted immediately
+    // because we're extracting the final 12 digits
+    if (cameFromLongFedEx) {
+
+      pendingFedExTracking = "";
+      pendingFedExCount = 0;
+
+      submitTracking(tracking, carrier);
+
+      return;
+    }
+
+
+    // Direct 12-digit FedEx read:
+    // require same number twice before saving
+    if (/^\d{12}$/.test(tracking)) {
+
+      // Reset pending confirmation if too much time passed
+      if (now - pendingFedExTime > 4000) {
+        pendingFedExTracking = "";
+        pendingFedExCount = 0;
+      }
+
+
+      if (tracking === pendingFedExTracking) {
+
+        pendingFedExCount++;
+
+      } else {
+
+        pendingFedExTracking = tracking;
+        pendingFedExCount = 1;
+
+      }
+
+
+      pendingFedExTime = now;
+
+
+      const status = document.getElementById("status");
+
+
+      if (pendingFedExCount < 2) {
+
+        status.className = "searching";
+
+        status.innerHTML =
+          "Confirming FedEx tracking..." +
+          "<div class='tracking'>" +
+          tracking +
+          "</div>";
+
+        return;
+      }
+
+
+      // Confirmed twice
+      pendingFedExTracking = "";
+      pendingFedExCount = 0;
+
+      submitTracking(tracking, carrier);
+
+      return;
+    }
+  }
+
+
+  // UPS / USPS / other accepted carrier
   submitTracking(tracking, carrier);
 }
 
 
-// Save to Google Sheet
+// -----------------------------
+// SAVE TO GOOGLE SHEET
+// -----------------------------
 async function submitTracking(tracking, carrier) {
+
+  saveLock = true;
 
   const status = document.getElementById("status");
 
@@ -262,6 +376,9 @@ async function submitTracking(tracking, carrier) {
     }
 
 
+    lastSavedTracking = tracking;
+    lastSavedTime = Date.now();
+
     showSuccess(tracking, carrier);
 
 
@@ -277,11 +394,20 @@ async function submitTracking(tracking, carrier) {
       "<div class='tracking'>" +
       error.message +
       "</div>";
+
+
+    // Unlock quicker after failure
+    setTimeout(function() {
+      saveLock = false;
+    }, 1500);
+
   }
 }
 
 
-// Success feedback
+// -----------------------------
+// SUCCESS
+// -----------------------------
 function showSuccess(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -307,11 +433,22 @@ function showSuccess(tracking, carrier) {
     status.innerHTML =
       "Ready for next package";
 
-  }, 2500);
+  }, 2000);
+
+
+  // Brief lock so the same physical label
+  // doesn't instantly fire another scan
+  setTimeout(function() {
+
+    saveLock = false;
+
+  }, 3000);
 }
 
 
-// Start scanner only after user taps button
+// -----------------------------
+// START CAMERA
+// -----------------------------
 async function startScanner() {
 
   const status = document.getElementById("status");
@@ -330,7 +467,9 @@ async function startScanner() {
 
 
   button.disabled = true;
-  button.innerHTML = "Starting camera...";
+
+  button.innerHTML =
+    "Starting camera...";
 
 
   try {
@@ -347,12 +486,12 @@ async function startScanner() {
       },
 
       {
-        fps: 12,
+        fps: 15,
 
         qrbox: function(viewfinderWidth, viewfinderHeight) {
 
           const width =
-            Math.min(viewfinderWidth * 0.9, 550);
+            Math.min(viewfinderWidth * 0.92, 550);
 
           const height =
             Math.min(viewfinderHeight * 0.28, 160);
@@ -386,9 +525,7 @@ async function startScanner() {
     console.error(error);
 
 
-    // iPhone can reject exact environment camera,
-    // so fall back to any rear-facing preference
-
+    // iPhone fallback
     try {
 
       scanner = new Html5Qrcode("reader");
@@ -401,7 +538,7 @@ async function startScanner() {
         },
 
         {
-          fps: 12,
+          fps: 15,
 
           qrbox: {
             width: 300,
@@ -438,7 +575,7 @@ async function startScanner() {
       status.className = "error";
 
       status.innerHTML =
-        "❌ Camera could not start.<br>" +
+        "❌ Camera could not start." +
         "<div class='tracking'>" +
         fallbackError.message +
         "</div>";
