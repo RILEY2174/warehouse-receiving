@@ -8,10 +8,7 @@
 
   <title>Warehouse Receiving</title>
 
-  <script
-    src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
-    onerror="libraryFailed()">
-  </script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
   <style>
     body {
@@ -40,7 +37,20 @@
       background: white;
       border-radius: 12px;
       overflow: hidden;
-      min-height: 100px;
+    }
+
+    #startButton {
+      font-size: 24px;
+      font-weight: bold;
+      padding: 18px 30px;
+      border: none;
+      border-radius: 12px;
+      background: #111;
+      color: white;
+      width: 100%;
+      max-width: 500px;
+      margin-bottom: 20px;
+      cursor: pointer;
     }
 
     #status {
@@ -80,10 +90,14 @@
 
 <div class="container">
 
+  <button id="startButton">
+    📷 START SCANNER
+  </button>
+
   <div id="reader"></div>
 
   <div id="status">
-    Loading scanner...
+    Tap START SCANNER to begin
   </div>
 
 </div>
@@ -93,17 +107,13 @@
 const WEB_APP_URL =
 "https://script.google.com/macros/s/AKfycbzyI_dpKHI22joqGcDdf6TfBxwOU7Y1uyurlNw5WzZ8So054baA67JXDTk1una-TqFI0Q/exec";
 
+let scanner = null;
+
 let lastScan = "";
 let lastScanTime = 0;
 
 
-function libraryFailed() {
-  document.getElementById("status").className = "error";
-  document.getElementById("status").innerHTML =
-    "❌ Barcode scanner library failed to load.";
-}
-
-
+// Clean raw barcode data
 function cleanTracking(value) {
 
   let tracking = String(value || "")
@@ -112,13 +122,15 @@ function cleanTracking(value) {
     .toUpperCase();
 
 
-  // USPS: 420 + destination ZIP + real tracking number
+  // USPS:
+  // 420 + destination ZIP + actual tracking number
   if (/^420\d{5}\d{20,22}$/.test(tracking)) {
     tracking = tracking.substring(8);
   }
 
 
-  // FedEx long barcode ending in real 12-digit tracking
+  // FedEx Ground:
+  // long barcode ending with actual 12-digit tracking number
   if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
     tracking = tracking.slice(-12);
   }
@@ -128,6 +140,7 @@ function cleanTracking(value) {
 }
 
 
+// Identify carrier
 function getCarrier(tracking) {
 
   tracking = cleanTracking(tracking);
@@ -151,7 +164,7 @@ function getCarrier(tracking) {
   }
 
 
-  // FedEx common formats
+  // FedEx
   if (
     /^\d{12}$/.test(tracking) ||
     /^\d{15}$/.test(tracking) ||
@@ -166,6 +179,7 @@ function getCarrier(tracking) {
 }
 
 
+// Called whenever a barcode is seen
 function barcodeScanned(decodedText) {
 
   const tracking = cleanTracking(decodedText);
@@ -175,6 +189,7 @@ function barcodeScanned(decodedText) {
   const carrier = getCarrier(tracking);
 
 
+  // Ignore unrelated barcodes
   if (!carrier) {
 
     const status = document.getElementById("status");
@@ -194,6 +209,7 @@ function barcodeScanned(decodedText) {
   const now = Date.now();
 
 
+  // Prevent rapid repeat reads
   if (
     tracking === lastScan &&
     now - lastScanTime < 5000
@@ -209,6 +225,7 @@ function barcodeScanned(decodedText) {
 }
 
 
+// Save to Google Sheet
 async function submitTracking(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -264,6 +281,7 @@ async function submitTracking(tracking, carrier) {
 }
 
 
+// Success feedback
 function showSuccess(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -287,54 +305,77 @@ function showSuccess(tracking, carrier) {
     status.className = "";
 
     status.innerHTML =
-      "Point camera at next package tracking barcode";
+      "Ready for next package";
 
   }, 2500);
 }
 
 
-window.addEventListener("load", function() {
+// Start scanner only after user taps button
+async function startScanner() {
 
   const status = document.getElementById("status");
+  const button = document.getElementById("startButton");
 
 
-  if (typeof Html5QrcodeScanner === "undefined") {
+  if (typeof Html5Qrcode === "undefined") {
 
     status.className = "error";
 
     status.innerHTML =
-      "❌ Scanner library did not load.";
+      "❌ Barcode scanner library did not load.";
 
     return;
   }
 
 
+  button.disabled = true;
+  button.innerHTML = "Starting camera...";
+
+
   try {
 
-    const scanner = new Html5QrcodeScanner(
-      "reader",
+    scanner = new Html5Qrcode("reader");
+
+
+    await scanner.start(
+
+      {
+        facingMode: {
+          exact: "environment"
+        }
+      },
+
       {
         fps: 12,
 
-        qrbox: {
-          width: 300,
-          height: 140
-        },
+        qrbox: function(viewfinderWidth, viewfinderHeight) {
 
-        rememberLastUsedCamera: true
+          const width =
+            Math.min(viewfinderWidth * 0.9, 550);
+
+          const height =
+            Math.min(viewfinderHeight * 0.28, 160);
+
+          return {
+            width: width,
+            height: height
+          };
+        }
       },
 
-      false
-    );
-
-
-    scanner.render(
       barcodeScanned,
+
       function(errorMessage) {
-        // Normal while looking for barcodes
+        // Normal while searching
       }
+
     );
 
+
+    button.style.display = "none";
+
+    status.className = "";
 
     status.innerHTML =
       "Point camera at package tracking barcode";
@@ -342,13 +383,73 @@ window.addEventListener("load", function() {
 
   } catch (error) {
 
-    status.className = "error";
+    console.error(error);
 
-    status.innerHTML =
-      "❌ Scanner error: " + error.message;
+
+    // iPhone can reject exact environment camera,
+    // so fall back to any rear-facing preference
+
+    try {
+
+      scanner = new Html5Qrcode("reader");
+
+
+      await scanner.start(
+
+        {
+          facingMode: "environment"
+        },
+
+        {
+          fps: 12,
+
+          qrbox: {
+            width: 300,
+            height: 140
+          }
+        },
+
+        barcodeScanned,
+
+        function(errorMessage) {
+          // Normal while searching
+        }
+
+      );
+
+
+      button.style.display = "none";
+
+      status.className = "";
+
+      status.innerHTML =
+        "Point camera at package tracking barcode";
+
+
+    } catch (fallbackError) {
+
+      console.error(fallbackError);
+
+      button.disabled = false;
+
+      button.innerHTML =
+        "📷 START SCANNER";
+
+      status.className = "error";
+
+      status.innerHTML =
+        "❌ Camera could not start.<br>" +
+        "<div class='tracking'>" +
+        fallbackError.message +
+        "</div>";
+    }
   }
+}
 
-});
+
+document
+  .getElementById("startButton")
+  .addEventListener("click", startScanner);
 
 </script>
 
