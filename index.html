@@ -101,12 +101,32 @@ function cleanTracking(value) {
     .replace(/\s+/g, "")
     .toUpperCase();
 
-  // FedEx Ground barcodes sometimes contain
-  // a long internal number ending with the
-  // actual 12-digit tracking number.
+
+  // USPS Intelligent Mail Package Barcode
+  // Sometimes contains:
+  // 420 + 5-digit destination ZIP + actual tracking number
+  //
+  // Example:
+  // 420275229400109105116532400348
+  // becomes:
+  // 9400109105116532400348
+
+  if (/^420\d{5}\d{20,22}$/.test(tracking)) {
+    tracking = tracking.substring(8);
+  }
+
+
+  // FedEx Ground barcode
+  // Long barcode may end with the actual
+  // 12-digit FedEx tracking number.
+
   if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
     tracking = tracking.slice(-12);
   }
+
+
+  return tracking;
+}
 
   return tracking;
 }
