@@ -93,7 +93,7 @@ let lastScan = "";
 let lastScanTime = 0;
 
 
-// Clean barcode text
+// Clean and normalize barcode data
 function cleanTracking(value) {
 
   let tracking = String(value || "")
@@ -102,9 +102,8 @@ function cleanTracking(value) {
     .toUpperCase();
 
 
-  // USPS Intelligent Mail Package Barcode
-  // Sometimes contains:
-  // 420 + 5-digit destination ZIP + actual tracking number
+  // USPS barcode:
+  // 420 + destination ZIP + actual tracking number
   //
   // Example:
   // 420275229400109105116532400348
@@ -116,9 +115,9 @@ function cleanTracking(value) {
   }
 
 
-  // FedEx Ground barcode
-  // Long barcode may end with the actual
-  // 12-digit FedEx tracking number.
+  // FedEx Ground barcode:
+  // long internal barcode ending with
+  // the actual 12-digit tracking number
 
   if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
     tracking = tracking.slice(-12);
@@ -128,11 +127,8 @@ function cleanTracking(value) {
   return tracking;
 }
 
-  return tracking;
-}
 
-
-// Decide whether this looks like a real tracking number
+// Determine carrier
 function getCarrier(tracking) {
 
   tracking = cleanTracking(tracking);
@@ -142,7 +138,7 @@ function getCarrier(tracking) {
     return "UPS";
   }
 
-  // USPS common 20-22 digit formats
+  // USPS domestic
   if (/^(92|93|94|95|96)\d{18,20}$/.test(tracking)) {
     return "USPS";
   }
@@ -152,7 +148,7 @@ function getCarrier(tracking) {
     return "USPS";
   }
 
-  // FedEx Express / Ground common formats
+  // FedEx common formats
   if (
     /^\d{12}$/.test(tracking) ||
     /^\d{15}$/.test(tracking) ||
@@ -166,7 +162,7 @@ function getCarrier(tracking) {
 }
 
 
-// Runs whenever camera recognizes any barcode
+// Runs whenever camera sees a barcode
 function barcodeScanned(decodedText) {
 
   const tracking = cleanTracking(decodedText);
@@ -175,7 +171,6 @@ function barcodeScanned(decodedText) {
 
   const carrier = getCarrier(tracking);
 
-  // Ignore barcodes that do not look like package tracking numbers
   if (!carrier) {
 
     const status = document.getElementById("status");
@@ -193,7 +188,7 @@ function barcodeScanned(decodedText) {
 
   const now = Date.now();
 
-  // Prevent repeated reads while camera remains on same barcode
+  // Prevent immediate repeat reads
   if (
     tracking === lastScan &&
     now - lastScanTime < 5000
@@ -208,7 +203,7 @@ function barcodeScanned(decodedText) {
 }
 
 
-// Send accepted tracking number to Google Sheet
+// Send tracking number to Google Sheet
 async function submitTracking(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -262,7 +257,7 @@ async function submitTracking(tracking, carrier) {
 }
 
 
-// Confirmation after successful save
+// Success feedback
 function showSuccess(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -328,11 +323,9 @@ function beep() {
 }
 
 
-// Start camera scanner
+// Start scanner
 const scanner = new Html5QrcodeScanner(
-
   "reader",
-
   {
     fps: 15,
 
@@ -358,19 +351,15 @@ const scanner = new Html5QrcodeScanner(
       Html5QrcodeScanType.SCAN_TYPE_CAMERA
     ]
   },
-
   false
 );
 
 
 scanner.render(
-
   barcodeScanned,
-
   function(errorMessage) {
-    // Normal while camera searches for a barcode
+    // Ignore normal scan-search messages
   }
-
 );
 
 </script>
