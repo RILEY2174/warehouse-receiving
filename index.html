@@ -8,7 +8,10 @@
 
   <title>Warehouse Receiving</title>
 
-  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script
+    src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
+    onerror="libraryFailed()">
+  </script>
 
   <style>
     body {
@@ -37,6 +40,7 @@
       background: white;
       border-radius: 12px;
       overflow: hidden;
+      min-height: 100px;
     }
 
     #status {
@@ -79,7 +83,7 @@
   <div id="reader"></div>
 
   <div id="status">
-    Point camera at package tracking barcode
+    Loading scanner...
   </div>
 
 </div>
@@ -93,7 +97,13 @@ let lastScan = "";
 let lastScanTime = 0;
 
 
-// Clean and normalize barcode data
+function libraryFailed() {
+  document.getElementById("status").className = "error";
+  document.getElementById("status").innerHTML =
+    "❌ Barcode scanner library failed to load.";
+}
+
+
 function cleanTracking(value) {
 
   let tracking = String(value || "")
@@ -102,23 +112,13 @@ function cleanTracking(value) {
     .toUpperCase();
 
 
-  // USPS barcode:
-  // 420 + destination ZIP + actual tracking number
-  //
-  // Example:
-  // 420275229400109105116532400348
-  // becomes:
-  // 9400109105116532400348
-
+  // USPS: 420 + destination ZIP + real tracking number
   if (/^420\d{5}\d{20,22}$/.test(tracking)) {
     tracking = tracking.substring(8);
   }
 
 
-  // FedEx Ground barcode:
-  // long internal barcode ending with
-  // the actual 12-digit tracking number
-
+  // FedEx long barcode ending in real 12-digit tracking
   if (/^\d{30,}$/.test(tracking) && tracking.startsWith("96")) {
     tracking = tracking.slice(-12);
   }
@@ -128,25 +128,28 @@ function cleanTracking(value) {
 }
 
 
-// Determine carrier
 function getCarrier(tracking) {
 
   tracking = cleanTracking(tracking);
+
 
   // UPS
   if (/^1Z[A-Z0-9]{16}$/.test(tracking)) {
     return "UPS";
   }
 
+
   // USPS domestic
   if (/^(92|93|94|95|96)\d{18,20}$/.test(tracking)) {
     return "USPS";
   }
 
+
   // USPS international
   if (/^[A-Z]{2}\d{9}US$/.test(tracking)) {
     return "USPS";
   }
+
 
   // FedEx common formats
   if (
@@ -158,11 +161,11 @@ function getCarrier(tracking) {
     return "FedEx";
   }
 
+
   return null;
 }
 
 
-// Runs whenever camera sees a barcode
 function barcodeScanned(decodedText) {
 
   const tracking = cleanTracking(decodedText);
@@ -170,6 +173,7 @@ function barcodeScanned(decodedText) {
   if (!tracking) return;
 
   const carrier = getCarrier(tracking);
+
 
   if (!carrier) {
 
@@ -186,15 +190,17 @@ function barcodeScanned(decodedText) {
     return;
   }
 
+
   const now = Date.now();
 
-  // Prevent immediate repeat reads
+
   if (
     tracking === lastScan &&
     now - lastScanTime < 5000
   ) {
     return;
   }
+
 
   lastScan = tracking;
   lastScanTime = now;
@@ -203,7 +209,6 @@ function barcodeScanned(decodedText) {
 }
 
 
-// Send tracking number to Google Sheet
 async function submitTracking(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -216,32 +221,34 @@ async function submitTracking(tracking, carrier) {
     tracking +
     "</div>";
 
+
   const url =
     WEB_APP_URL +
     "?tracking=" +
     encodeURIComponent(tracking);
 
+
   try {
 
-    const response = await fetch(url, {
-      method: "GET"
-    });
+    const response = await fetch(url);
 
     const text = await response.text();
+
 
     if (!response.ok) {
       throw new Error(text || "Could not save package");
     }
 
+
     if (!text.toLowerCase().includes("received")) {
       throw new Error(text || "Unexpected response");
     }
 
+
     showSuccess(tracking, carrier);
 
-  } catch (error) {
 
-    console.error(error);
+  } catch (error) {
 
     status.className = "error";
 
@@ -257,7 +264,6 @@ async function submitTracking(tracking, carrier) {
 }
 
 
-// Success feedback
 function showSuccess(tracking, carrier) {
 
   const status = document.getElementById("status");
@@ -270,11 +276,11 @@ function showSuccess(tracking, carrier) {
     carrier + " • " + tracking +
     "</div>";
 
+
   if (navigator.vibrate) {
     navigator.vibrate(150);
   }
 
-  beep();
 
   setTimeout(function() {
 
@@ -287,80 +293,62 @@ function showSuccess(tracking, carrier) {
 }
 
 
-// Confirmation beep
-function beep() {
+window.addEventListener("load", function() {
+
+  const status = document.getElementById("status");
+
+
+  if (typeof Html5QrcodeScanner === "undefined") {
+
+    status.className = "error";
+
+    status.innerHTML =
+      "❌ Scanner library did not load.";
+
+    return;
+  }
+
 
   try {
 
-    const AudioContextClass =
-      window.AudioContext ||
-      window.webkitAudioContext;
+    const scanner = new Html5QrcodeScanner(
+      "reader",
+      {
+        fps: 12,
 
-    const audioContext =
-      new AudioContextClass();
+        qrbox: {
+          width: 300,
+          height: 140
+        },
 
-    const oscillator =
-      audioContext.createOscillator();
+        rememberLastUsedCamera: true
+      },
 
-    const gain =
-      audioContext.createGain();
+      false
+    );
 
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
 
-    oscillator.frequency.value = 900;
+    scanner.render(
+      barcodeScanned,
+      function(errorMessage) {
+        // Normal while looking for barcodes
+      }
+    );
 
-    oscillator.start();
 
-    setTimeout(function() {
-      oscillator.stop();
-      audioContext.close();
-    }, 120);
+    status.innerHTML =
+      "Point camera at package tracking barcode";
+
 
   } catch (error) {
-    console.log("Audio not available.");
+
+    status.className = "error";
+
+    status.innerHTML =
+      "❌ Scanner error: " + error.message;
   }
-}
 
-
-// Start scanner
-const scanner = new Html5QrcodeScanner(
-  "reader",
-  {
-    fps: 15,
-
-    qrbox: function(viewfinderWidth, viewfinderHeight) {
-
-      const width =
-        Math.min(viewfinderWidth * 0.9, 550);
-
-      const height =
-        Math.min(viewfinderHeight * 0.28, 150);
-
-      return {
-        width: width,
-        height: height
-      };
-    },
-
-    rememberLastUsedCamera: true,
-
-    aspectRatio: 1.777778,
-
-    supportedScanTypes: [
-      Html5QrcodeScanType.SCAN_TYPE_CAMERA
-    ]
-  },
-  false
-);
-
-
-scanner.render(
-  barcodeScanned,
-  function(errorMessage) {
-    // Ignore normal scan-search messages
-  }
-);
+});
 
 </script>
 
