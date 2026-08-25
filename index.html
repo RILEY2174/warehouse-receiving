@@ -56,19 +56,14 @@
       background: #ffd9d9 !important;
     }
 
+    .searching {
+      background: #fff3cd !important;
+    }
+
     .tracking {
       font-size: 18px;
       margin-top: 8px;
       word-break: break-all;
-    }
-
-    button {
-      font-size: 22px;
-      padding: 15px 30px;
-      margin-top: 20px;
-      border-radius: 10px;
-      border: none;
-      cursor: pointer;
     }
   </style>
 </head>
@@ -84,7 +79,7 @@
   <div id="reader"></div>
 
   <div id="status">
-    Point camera at package barcode
+    Point camera at package tracking barcode
   </div>
 
 </div>
@@ -94,25 +89,82 @@
 const WEB_APP_URL =
 "https://script.google.com/macros/s/AKfycbzyI_dpKHI22joqGcDdf6TfBxwOU7Y1uyurlNw5WzZ8So054baA67JXDTk1una-TqFI0Q/exec";
 
-
 let lastScan = "";
 let lastScanTime = 0;
 
 
-// Runs when a barcode is successfully read
-function barcodeScanned(decodedText) {
+// Clean barcode text
+function cleanTracking(value) {
 
-  let tracking = String(decodedText || "")
+  return String(value || "")
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
+}
+
+
+// Decide whether this looks like a real tracking number
+function getCarrier(tracking) {
+
+  tracking = cleanTracking(tracking);
+
+  // UPS
+  if (/^1Z[A-Z0-9]{16}$/.test(tracking)) {
+    return "UPS";
+  }
+
+  // USPS common 20-22 digit formats
+  if (/^(92|93|94|95|96)\d{18,20}$/.test(tracking)) {
+    return "USPS";
+  }
+
+  // USPS international
+  if (/^[A-Z]{2}\d{9}US$/.test(tracking)) {
+    return "USPS";
+  }
+
+  // FedEx Express / Ground common formats
+  if (
+    /^\d{12}$/.test(tracking) ||
+    /^\d{15}$/.test(tracking) ||
+    /^\d{20}$/.test(tracking) ||
+    /^\d{22}$/.test(tracking)
+  ) {
+    return "FedEx";
+  }
+
+  return null;
+}
+
+
+// Runs whenever camera recognizes any barcode
+function barcodeScanned(decodedText) {
+
+  const tracking = cleanTracking(decodedText);
 
   if (!tracking) return;
 
+  const carrier = getCarrier(tracking);
+
+  // Ignore barcodes that do not look like package tracking numbers
+  if (!carrier) {
+
+    const status = document.getElementById("status");
+
+    status.className = "searching";
+
+    status.innerHTML =
+      "Looking for tracking barcode..." +
+      "<div class='tracking'>Ignored: " +
+      tracking +
+      "</div>";
+
+    return;
+  }
+
   const now = Date.now();
 
-  // Prevent repeated reads of the same barcode
-  // while the camera is still pointed at it
+  // Prevent repeated reads while camera remains on same barcode
   if (
     tracking === lastScan &&
     now - lastScanTime < 5000
@@ -123,25 +175,27 @@ function barcodeScanned(decodedText) {
   lastScan = tracking;
   lastScanTime = now;
 
-  submitTracking(tracking);
+  submitTracking(tracking, carrier);
 }
 
 
-// Sends tracking number to Google Apps Script
-async function submitTracking(tracking) {
+// Send accepted tracking number to Google Sheet
+async function submitTracking(tracking, carrier) {
 
   const status = document.getElementById("status");
 
   status.className = "";
+
   status.innerHTML =
     "Saving..." +
     "<div class='tracking'>" +
     tracking +
     "</div>";
 
- const url =
-  WEB_APP_URL +
-  "?tracking=" + encodeURIComponent(tracking);
+  const url =
+    WEB_APP_URL +
+    "?tracking=" +
+    encodeURIComponent(tracking);
 
   try {
 
@@ -159,7 +213,7 @@ async function submitTracking(tracking) {
       throw new Error(text || "Unexpected response");
     }
 
-    showSuccess(tracking);
+    showSuccess(tracking, carrier);
 
   } catch (error) {
 
@@ -179,8 +233,8 @@ async function submitTracking(tracking) {
 }
 
 
-// Successful scan feedback
-function showSuccess(tracking) {
+// Confirmation after successful save
+function showSuccess(tracking, carrier) {
 
   const status = document.getElementById("status");
 
@@ -189,7 +243,7 @@ function showSuccess(tracking) {
   status.innerHTML =
     "✅ PACKAGE RECEIVED" +
     "<div class='tracking'>" +
-    tracking +
+    carrier + " • " + tracking +
     "</div>";
 
   if (navigator.vibrate) {
@@ -203,13 +257,13 @@ function showSuccess(tracking) {
     status.className = "";
 
     status.innerHTML =
-      "Point camera at next package barcode";
+      "Point camera at next package tracking barcode";
 
   }, 2500);
 }
 
 
-// Short confirmation beep
+// Confirmation beep
 function beep() {
 
   try {
@@ -245,20 +299,21 @@ function beep() {
 }
 
 
-// Start barcode scanner
+// Start camera scanner
 const scanner = new Html5QrcodeScanner(
+
   "reader",
 
   {
-    fps: 10,
+    fps: 15,
 
     qrbox: function(viewfinderWidth, viewfinderHeight) {
 
       const width =
-        Math.min(viewfinderWidth * 0.85, 500);
+        Math.min(viewfinderWidth * 0.9, 550);
 
       const height =
-        Math.min(viewfinderHeight * 0.35, 180);
+        Math.min(viewfinderHeight * 0.28, 150);
 
       return {
         width: width,
@@ -280,12 +335,13 @@ const scanner = new Html5QrcodeScanner(
 
 
 scanner.render(
+
   barcodeScanned,
 
   function(errorMessage) {
-    // Scanner generates messages continuously
-    // while searching, so we intentionally ignore these.
+    // Normal while camera searches for a barcode
   }
+
 );
 
 </script>
